@@ -179,8 +179,8 @@ function buildVolumeMounts(
   // groups. Recompiled on container startup via entrypoint.sh.
   const agentRunnerSrc = path.join(
     projectRoot,
-    'container',
-    'agent-runner',
+    '..',
+    'agent',
     'src',
   );
   const groupAgentRunnerDir = path.join(
@@ -189,6 +189,7 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
+  logger.info(`>>>>>>>>>>>>${agentRunnerSrc}`)
   if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }

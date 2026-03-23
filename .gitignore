@@ -1,6 +1,3 @@
-# Secrets
-.env
-.env_container
 
 # Temp files
 .tmp-*
@@ -11,3 +8,8 @@
 # IDE
 .idea/
 .vscode/
+
+# Secrets
+.env
+.env_container
+
