@@ -1,0 +1,13 @@
+# Secrets
+.env
+.env_container
+
+# Temp files
+.tmp-*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

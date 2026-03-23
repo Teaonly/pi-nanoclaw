@@ -1,0 +1,19 @@
+// Channel self-registration barrel file.
+// Each import triggers the channel module's registerChannel() call.
+
+// discord
+
+// gmail
+
+// slack
+
+// telegram
+
+// whatsapp
+
+// web
+//import "./web.js";
+// qq
+//import './qq.js';
+// wechat
+import './wechat.js';

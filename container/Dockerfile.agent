@@ -1,0 +1,40 @@
+# NanoClaw Agent Container
+# Runs Pi Agent in isolated Linux VM with browser automation
+
+FROM pi-base:latest
+
+# Set Chromium path for agent-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Create app directory
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY agent/package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy and build TypeScript source code
+COPY agent ./
+RUN npm run build
+
+# Create entrypoint script
+COPY container/entrypoint.sh ./ 
+RUN chmod +x ./entrypoint.sh
+
+# Create workspace directories
+RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
+
+# Set ownership to node user (non-root) for writable directories
+RUN chown -R node:node /workspace && chmod 777 /home/node
+
+# Switch to non-root user (required for --dangerously-skip-permissions)
+USER node
+
+# Set working directory to group workspace
+WORKDIR /workspace/group
+
+# Entry point reads JSON from stdin, outputs JSON to stdout
+ENTRYPOINT ["/app/entrypoint.sh"]
