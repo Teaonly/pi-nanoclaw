@@ -17,7 +17,7 @@ COPY agent/package*.json ./
 RUN npm install
 
 # Copy and build TypeScript source code
-COPY agent ./
+COPY agent/ ./
 RUN npm run build
 
 # Create entrypoint script

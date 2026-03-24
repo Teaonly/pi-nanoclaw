@@ -3,6 +3,8 @@ store/
 data/
 logs/
 
+pi/agent/models.json
+
 # Groups - only track base structure and specific AGENT.md files
 groups/*
 !groups/main/

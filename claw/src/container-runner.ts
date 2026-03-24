@@ -85,10 +85,27 @@ function buildVolumeMounts(
     'sessions',
     group.folder,
     '.pi',
-    'agent',
   );
   fs.mkdirSync(groupPiDst, { recursive: true });
   fs.cpSync(PI_DIR, groupPiDst, { recursive: true });
+  // Replace config json by real value.
+  const api_key = readEnvFile(["GLM_API_KEY"])["GLM_API_KEY"];
+  if (api_key) {
+    const modelFile = path.join(
+      groupPiDst,
+      "agent",
+      "models.json",
+    );
+    const modelsConfig = JSON.parse(fs.readFileSync(modelFile, 'utf-8'));
+    modelsConfig.providers.BigModel.apiKey = api_key;
+    fs.writeFileSync(modelFile, JSON.stringify(modelsConfig, null, 2));
+  }
+
+  mounts.push({
+    hostPath: groupPiDst,
+    containerPath: '/home/node/.pi',
+    readonly: false
+  });
   
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
@@ -117,9 +134,9 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
-  }
+  fs.mkdirSync(groupAgentRunnerDir, { recursive: true });
+  fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+
   mounts.push({
     hostPath: groupAgentRunnerDir,
     containerPath: '/app/src',

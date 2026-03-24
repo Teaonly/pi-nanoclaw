@@ -17,6 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createAgentSession } from "@mariozechner/pi-coding-agent";
 
 interface ContainerInput {
   prompt: string;
@@ -223,7 +224,13 @@ async function runQuery(
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   
-  log(`input: ${prompt}, ${containerInput.prompt}`);
+  // Minimal: defaults with DefaultResourceLoader
+  const { session } = await createAgentSession();
+  session.subscribe((event) => {
+    log(`====> ${event.type}`)
+  });
+  await session.prompt("Python 是谁发明的?");
+
   return {
     closedDuringQuery: false
   };
