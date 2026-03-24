@@ -36,6 +36,7 @@ export const SENDER_ALLOWLIST_PATH = path.join(
 export const STORE_DIR = path.resolve(PROJECT_ROOT, '..', 'home', 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, '..', 'home', 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, '..', 'home', 'data');
+export const PI_DIR = path.resolve(PROJECT_ROOT, '..', 'home', 'pi');
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'pi-agent:latest';
