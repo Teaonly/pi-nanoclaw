@@ -1,0 +1,228 @@
+import { TUnsafe, Type } from "@sinclair/typebox";
+import {AgentTool} from "@mariozechner/pi-agent-core";
+import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
+import { CronExpressionParser } from 'cron-parser';
+
+const IPC_DIR = '/workspace/ipc';
+const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
+const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+
+const chatJid = process.env.NANOCLAW_CHAT_JID!;
+const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
+
+/**
+ * Creates a string enum schema compatible with Google's API and other providers
+ * that don't support anyOf/const patterns.
+ *
+ * @example
+ * const OperationSchema = StringEnum(["add", "subtract", "multiply", "divide"], {
+ *   description: "The operation to perform"
+ * });
+ *
+ * type Operation = Static<typeof OperationSchema>; // "add" | "subtract" | "multiply" | "divide"
+ */
+function StringEnum<T extends readonly string[]>(
+    values: T,
+    options?: { description?: string; default?: T[number] },
+): TUnsafe<T[number]> {
+    return Type.Unsafe<T[number]>({
+        type: "string",
+        enum: values as any,
+        ...(options?.description && { description: options.description }),
+        ...(options?.default && { default: options.default }),
+    });
+}
+
+function writeIpcFile(dir: string, data: object): string {
+  fs.mkdirSync(dir, { recursive: true });
+
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const filepath = path.join(dir, filename);
+
+  // Atomic write: temp file then rename
+  const tempPath = `${filepath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tempPath, filepath);
+
+  return filename;
+}
+
+export const sendMessageTool: AgentTool = {
+  name: "send_message",
+  label: "Send Message to Channel",  // For UI display
+  description: "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
+  parameters: Type.Object({
+    text: Type.String({ description: "The message text to send" }),
+    sender: Type.String({ description: 'Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.' }),
+  }),
+
+  execute: async (toolCallId, params:any, signal,  onUpdate) => {
+    const data: Record<string, string | undefined> = {
+      type: 'message',
+      chatJid,
+      text: params.text,
+      sender: params.sender || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return {
+      content: [{ type: 'text' as const, text: 'Message sent.' }],
+      details: undefined,
+    };
+  },
+};
+
+export const scheduleTaskTool: AgentTool = {
+  name: "schedule_task",
+  label: "Schedule a new task",  
+  description: `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
+
+CONTEXT MODE - Choose based on task type:
+\u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
+\u2022 "isolated": Task runs in a fresh session with no conversation history. Use for independent tasks that don't need prior context. When using isolated mode, include all necessary context in the prompt itself.
+
+If unsure which mode to use, you can ask the user. Examples:
+- "Remind me about our discussion" \u2192 group (needs conversation context)
+- "Check the weather every morning" \u2192 isolated (self-contained task)
+- "Follow up on my request" \u2192 group (needs to know what was requested)
+- "Generate a daily report" \u2192 isolated (just needs instructions in prompt)
+
+MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It can also use send_message for immediate delivery, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
+\u2022 Always send a message (e.g., reminders, daily briefings)
+\u2022 Only send a message when there's something to report (e.g., "notify me if...")
+\u2022 Never send a message (background maintenance tasks)
+
+SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
+\u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
+\u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
+\u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
+  parameters: Type.Object({
+    prompt: Type.String({ description: 'What the agent should do when the task runs. For isolated mode, include all necessary context here.' }),
+    schedule_type: StringEnum(
+      ['cron', 'interval', 'once'], 
+      {description:'cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'}),
+    schedule_value: Type.String({description:'cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'}),
+    context_mode: StringEnum(
+      ['group', 'isolated'],
+      {
+        description:'group=runs with chat history and memory, isolated=fresh session (include context in prompt)',
+        default: "group"  
+      }),
+  }),
+
+  execute: async (toolCallId, args:any, signal,  onUpdate) => {
+    
+    // Validate schedule_value before writing IPC
+    if (args.schedule_type === 'cron') {
+      try {
+        CronExpressionParser.parse(args.schedule_value);
+      } catch {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
+          isError: true,
+          details: undefined,
+        };
+      }
+    } else if (args.schedule_type === 'interval') {
+      const ms = parseInt(args.schedule_value, 10);
+      if (isNaN(ms) || ms <= 0) {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
+          isError: true,
+          details: undefined,
+        };
+      }
+    } else if (args.schedule_type === 'once') {
+      if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
+        return {
+          content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
+          isError: true,
+          details: undefined,
+        };
+      }
+      const date = new Date(args.schedule_value);
+      if (isNaN(date.getTime())) {
+        return {
+          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
+          isError: true,
+          details: undefined,
+        };
+      }
+    }
+
+    // Non-main groups can only schedule for themselves
+    const targetJid = chatJid;
+    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const data = {
+      type: 'schedule_task',
+      taskId,
+      prompt: args.prompt,
+      schedule_type: args.schedule_type,
+      schedule_value: args.schedule_value,
+      context_mode: args.context_mode || 'group',
+      targetJid,
+      createdBy: groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const msg = `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}`;
+    return {
+      content: [{ type: 'text' as const, text: msg }],
+      details: undefined,
+    };
+  },
+};
+
+export const listTasksTool: AgentTool = {
+  name: "list_tasks",
+  label: "List scheduled tasks.",  // For UI display
+  description: "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
+  parameters: Type.Object({}),
+
+  execute: async (toolCallId, params:any, signal,  onUpdate) => {
+    const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
+
+    try {
+      if (!fs.existsSync(tasksFile)) {
+        return { 
+          content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }],
+          details: undefined
+        };
+      }
+
+      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+
+      const tasks = allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+
+      if (tasks.length === 0) {
+        return { 
+          content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }],
+          details: undefined,
+        };
+      }
+
+      const formatted = tasks
+        .map(
+          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
+            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+        )
+        .join('\n');
+
+      return { 
+        content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }],
+        details: undefined
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
+        details: undefined
+      };
+    }
+  },
+};

@@ -17,7 +17,18 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createAgentSession } from "@mariozechner/pi-coding-agent";
+import {
+	createAgentSession,
+  readTool,
+  writeTool,
+  editTool,
+  bashTool,
+} from "@mariozechner/pi-coding-agent";
+import {
+  sendMessageTool, 
+  scheduleTaskTool,
+  listTasksTool
+} from "./ipctools.js"
 
 interface ContainerInput {
   prompt: string;
@@ -117,32 +128,7 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
-function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
-  const projectDir = path.dirname(transcriptPath);
-  const indexPath = path.join(projectDir, 'sessions-index.json');
 
-  if (!fs.existsSync(indexPath)) {
-    log(`Sessions index not found at ${indexPath}`);
-    return null;
-  }
-
-  try {
-    const index: SessionsIndex = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-    const entry = index.entries.find(e => e.sessionId === sessionId);
-    if (entry?.summary) {
-      return entry.summary;
-    }
-  } catch (err) {
-    log(`Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  return null;
-}
-
-interface ParsedMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
 
 /**
  * Check for _close sentinel.
@@ -223,14 +209,53 @@ async function runQuery(
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   
-  // Minimal: defaults with DefaultResourceLoader
-  const { session } = await createAgentSession();
-  session.subscribe((event) => {
-    log(`====> ${event.type}`)
+  const tools = [readTool, writeTool, editTool, bashTool, sendMessageTool, scheduleTaskTool, listTasksTool];
+  const { session } = await createAgentSession({
+    tools: tools,
   });
-  await session.prompt("Python 是谁发明的?");
 
+  session.subscribe((event) => {
+    switch (event.type) {
+      case "message_update":
+        break;
+      case "tool_execution_start":
+        log(`Tool: ${event.toolName}`);
+        break;
+      case "tool_execution_end":
+        log(`Result: ${event.result}`);
+        break;
+      case "agent_end":
+        log("Done");
+        break;
+    }
+  });
+
+  await session.prompt( prompt);
+  const newSessionId = session.sessionId;
+  const last = session.state.messages.length - 1;
+  const msg = session.state.messages[last];
+  if (msg.role === "assistant") {
+    if ( msg.errorMessage ) {
+      writeOutput({
+        status: 'error',
+        result: msg.errorMessage,
+        newSessionId: newSessionId,
+      });
+    } else {
+      msg.content.forEach((m) => {
+        if (m.type == "text") {
+          writeOutput({
+            status: 'success',
+            result: m.text,
+            newSessionId: newSessionId,
+          });
+        }
+      });
+    }
+  } 
+  
   return {
+    newSessionId: session.sessionId,
     closedDuringQuery: false
   };
 }
