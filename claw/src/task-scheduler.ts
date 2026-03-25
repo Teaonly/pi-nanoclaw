@@ -176,7 +176,6 @@ async function runTask(
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
-        isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
       },

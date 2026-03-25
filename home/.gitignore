@@ -2,14 +2,4 @@
 store/
 data/
 logs/
-
-pi/agent/models.json
-
-# Groups - only track base structure and specific AGENT.md files
-groups/*
-!groups/main/
-!groups/global/
-groups/main/*
-groups/global/*
-!groups/main/AGENT.md
-!groups/global/AGENT.md
+group/
