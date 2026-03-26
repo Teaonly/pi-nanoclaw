@@ -12,4 +12,4 @@
 # Secrets
 .env
 .env_container
-
+.wechat_auth.json
