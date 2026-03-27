@@ -7,6 +7,9 @@ export interface NewMessage {
   timestamp: string;
 }
 
+// name: for display
+// jid: for key
+// folder: for file IPC
 export interface Channel {
   name: string;
   jid: string;
@@ -31,6 +34,7 @@ export interface ChannelRuntime {
   loadState(): void;
   saveState(): void;
   findChannel(jid: string): Channel | null;
+  findChannelByFolder(folder: string): Channel | null;
 }
 
 export interface ScheduledTask {

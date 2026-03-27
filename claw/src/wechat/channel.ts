@@ -83,7 +83,7 @@ export class WeChatChannel implements Channel {
       WX_ACCOUNT_ID: auth.WX_ACCOUNT_ID,
       WX_USER_ID: auth.WX_USER_ID,
     };
-    this.name = "WeChat-${auth.WX_USER_ID}".slice(15);
+    this.name = `WeChat-${auth.WX_USER_ID}`.slice(0, 15);
     this.jid = `wx-${auth.WX_USER_ID}`;
     this.folder = "wx-" + auth.WX_ACCOUNT_ID.split("@")[0];
     this.opts = opts;
@@ -113,10 +113,26 @@ export class WeChatChannel implements Channel {
   isConnected(): boolean {
     return this.connected;
   }
+
   async sendMessage(
     type: "text" | "image" | "file",
     content: string,
-  ): Promise<void> {}
+  ): Promise<void> {
+    if (!this.connected || !this.auth.WX_TOKEN) {
+      logger.warn("WeChat channel not connected, cannot send message");
+      return;
+    }
+    const userId = this.auth.WX_USER_ID;
+    await sendMessage(
+      WECHAT_BASE_URL,
+      this.auth.WX_TOKEN,
+      userId,
+      content,
+      this.lastContentToken,
+    );
+    logger.debug({ userId }, "WeChat message sent");
+  }
+
   async setTyping(isTyping: boolean): Promise<void> {}
 
   // internal functions

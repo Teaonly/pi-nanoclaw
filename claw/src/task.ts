@@ -1,22 +1,23 @@
-import { ChildProcess } from 'child_process';
-import { CronExpressionParser } from 'cron-parser';
-import fs from 'fs';
+import { ChildProcess } from "child_process";
+import { CronExpressionParser } from "cron-parser";
+import fs from "fs";
 
-import {  SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import {
-  ContainerOutput,
-  runContainerAgent,
-} from './container-runner.js';
+import { SCHEDULER_POLL_INTERVAL, TIMEZONE } from "./config.js";
+import { ContainerOutput, runContainerAgent } from "./container.js";
 import {
   getAllTasks,
   getDueTasks,
   getTaskById,
   updateTask,
   updateTaskAfterRun,
-} from './db.js';
-import { GroupQueue, resolveGroupFolderPath, writeTasksSnapshot } from './groups.js';
-import { logger } from './logger.js';
-import { ChannelRuntime, ScheduledTask } from './types.js';
+} from "./db.js";
+import {
+  GroupQueue,
+  resolveGroupFolderPath,
+  writeTasksSnapshot,
+} from "./group.js";
+import { logger } from "./logger.js";
+import { ChannelRuntime, ScheduledTask, Channel } from "./types.js";
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -26,24 +27,24 @@ import { ChannelRuntime, ScheduledTask } from './types.js';
  * Co-authored-by: @community-pr-601
  */
 export function computeNextRun(task: ScheduledTask): string | null {
-  if (task.schedule_type === 'once') return null;
+  if (task.schedule_type === "once") return null;
 
   const now = Date.now();
 
-  if (task.schedule_type === 'cron') {
+  if (task.schedule_type === "cron") {
     const interval = CronExpressionParser.parse(task.schedule_value, {
       tz: TIMEZONE,
     });
     return interval.next().toISOString();
   }
 
-  if (task.schedule_type === 'interval') {
+  if (task.schedule_type === "interval") {
     const ms = parseInt(task.schedule_value, 10);
     if (!ms || ms <= 0) {
       // Guard against malformed interval that would cause an infinite loop
       logger.warn(
         { taskId: task.id, value: task.schedule_value },
-        'Invalid interval value',
+        "Invalid interval value",
       );
       return new Date(now + 60_000).toISOString();
     }
@@ -60,7 +61,7 @@ export function computeNextRun(task: ScheduledTask): string | null {
 }
 
 export interface SchedulerDependencies {
-  runtime: ChannelRuntime,
+  runtime: ChannelRuntime;
   queue: GroupQueue;
   onProcess: (
     groupJid: string,
@@ -82,10 +83,10 @@ async function runTask(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     // Stop retry churn for malformed legacy rows.
-    updateTask(task.id, { status: 'paused' });
+    updateTask(task.id, { status: "paused" });
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder, error },
-      'Task has invalid group folder',
+      "Task has invalid group folder",
     );
     return;
   }
@@ -93,18 +94,15 @@ async function runTask(
 
   logger.info(
     { taskId: task.id, group: task.group_folder },
-    'Running scheduled task',
+    "Running scheduled task",
   );
 
-  const groups = deps.runtime.channels;
-  const group = Object.values(groups).find(
-    (g) => g.folder === task.group_folder,
-  );
+  const group = deps.runtime.findChannelByFolder(task.group_folder);
 
   if (!group) {
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder },
-      'Group not found for task',
+      "Group not found for task",
     );
     return;
   }
@@ -127,13 +125,6 @@ async function runTask(
   let result: string | null = null;
   let error: string | null = null;
 
-  /*
-  // For group context mode, use the group's current session
-  const sessions = deps.getSessions();
-  const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
-  */
-
   // After the task produces a result, close the container promptly.
   // Tasks are single-turn — no need to wait IDLE_TIMEOUT (30 min) for the
   // query loop to time out. A short delay handles any final MCP calls.
@@ -143,7 +134,7 @@ async function runTask(
   const scheduleClose = () => {
     if (closeTimer) return; // already scheduled
     closeTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id }, 'Closing task container after result');
+      logger.debug({ taskId: task.id }, "Closing task container after result");
       deps.queue.closeStdin(task.jid);
     }, TASK_CLOSE_DELAY_MS);
   };
@@ -153,35 +144,33 @@ async function runTask(
       group,
       {
         prompt: task.prompt,
-        sessionId,
         groupFolder: task.group_folder,
-        chatJid: task.chat_jid,
+        chatJid: task.jid,
         isScheduledTask: true,
-        assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) =>
-        deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+        deps.onProcess(task.jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          await deps.sendMessage(task.jid, streamedOutput.result);
           scheduleClose();
         }
-        if (streamedOutput.status === 'success') {
-          deps.queue.notifyIdle(task.chat_jid);
+        if (streamedOutput.status === "success") {
+          deps.queue.notifyIdle(task.jid);
           scheduleClose(); // Close promptly even when result is null (e.g. IPC-only tasks)
         }
-        if (streamedOutput.status === 'error') {
-          error = streamedOutput.error || 'Unknown error';
+        if (streamedOutput.status === "error") {
+          error = streamedOutput.error || "Unknown error";
         }
       },
     );
 
     if (closeTimer) clearTimeout(closeTimer);
 
-    if (output.status === 'error') {
-      error = output.error || 'Unknown error';
+    if (output.status === "error") {
+      error = output.error || "Unknown error";
     } else if (output.result) {
       // Result was already forwarded to the user via the streaming callback above
       result = output.result;
@@ -189,31 +178,20 @@ async function runTask(
 
     logger.info(
       { taskId: task.id, durationMs: Date.now() - startTime },
-      'Task completed',
+      "Task completed",
     );
   } catch (err) {
     if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
-    logger.error({ taskId: task.id, error }, 'Task failed');
+    logger.error({ taskId: task.id, error }, "Task failed");
   }
-
-  const durationMs = Date.now() - startTime;
-
-  logTaskRun({
-    task_id: task.id,
-    run_at: new Date().toISOString(),
-    duration_ms: durationMs,
-    status: error ? 'error' : 'success',
-    result,
-    error,
-  });
 
   const nextRun = computeNextRun(task);
   const resultSummary = error
     ? `Error: ${error}`
     : result
       ? result.slice(0, 200)
-      : 'Completed';
+      : "Completed";
   updateTaskAfterRun(task.id, nextRun, resultSummary);
 }
 
@@ -221,23 +199,23 @@ let schedulerRunning = false;
 
 export function startSchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
-    logger.debug('Scheduler loop already running, skipping duplicate start');
+    logger.debug("Scheduler loop already running, skipping duplicate start");
     return;
   }
   schedulerRunning = true;
-  logger.info('Scheduler loop started');
+  logger.info("Scheduler loop started");
 
   const loop = async () => {
     try {
       const dueTasks = getDueTasks();
       if (dueTasks.length > 0) {
-        logger.info({ count: dueTasks.length }, 'Found due tasks');
+        logger.info({ count: dueTasks.length }, "Found due tasks");
       }
 
       for (const task of dueTasks) {
         // Re-check task status in case it was paused/cancelled
         const currentTask = getTaskById(task.id);
-        if (!currentTask || currentTask.status !== 'active') {
+        if (!currentTask || currentTask.status !== "active") {
           continue;
         }
 
@@ -246,7 +224,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         );
       }
     } catch (err) {
-      logger.error({ err }, 'Error in scheduler loop');
+      logger.error({ err }, "Error in scheduler loop");
     }
 
     setTimeout(loop, SCHEDULER_POLL_INTERVAL);

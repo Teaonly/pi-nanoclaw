@@ -1,33 +1,106 @@
 /**
- * Container Runner for NanoClaw
+ * Container Runner for VT-Claw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from "child_process";
+import { ChildProcess, exec, spawn, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
 import {
   CONTAINER_IMAGE,
+  CONTAINER_NAME_PREFIX,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
-  PI_DIR,
   IDLE_TIMEOUT,
   TIMEZONE,
+  OUTPUT_START_MARKER,
+  OUTPUT_END_MARKER
 } from "./config.js";
-import { readContainerEnvFile, readEnvFile } from "./env.js";
-import { resolveGroupFolderPath, resolveGroupIpcPath } from "./groups.js";
+import { readContainerEnvFile } from "./env.js";
+import { resolveGroupFolderPath, resolveGroupIpcPath } from "./group.js";
 import { logger } from "./logger.js";
-import {
-  CONTAINER_RUNTIME_BIN,
-  readonlyMountArgs,
-  stopContainer,
-} from "./container-runtime.js";
 import { Channel } from "./types.js";
 
-// Sentinel markers for robust output parsing (must match agent-runner)
-const OUTPUT_START_MARKER = "---VT-CALW_OUTPUT_START---";
-const OUTPUT_END_MARKER = "---VT-CALW_OUTPUT_END---";
+/** The container runtime binary name. */
+export const CONTAINER_RUNTIME_BIN = "docker";
+
+/** Returns CLI args for a readonly bind mount. */
+export function readonlyMountArgs(
+  hostPath: string,
+  containerPath: string,
+): string[] {
+  return ["-v", `${hostPath}:${containerPath}:ro`];
+}
+
+/** Returns the shell command to stop a container by name. */
+export function stopContainer(name: string): string {
+  return `${CONTAINER_RUNTIME_BIN} stop ${name}`;
+}
+
+/** Ensure the container runtime is running, starting it if needed. */
+export function ensureContainerRuntimeRunning(): void {
+  try {
+    execSync(`${CONTAINER_RUNTIME_BIN} info`, {
+      stdio: "pipe",
+      timeout: 10000,
+    });
+    logger.debug("Container runtime already running");
+  } catch (err) {
+    logger.error({ err }, "Failed to reach container runtime");
+    console.error(
+      "\n╔════════════════════════════════════════════════════════════════╗",
+    );
+    console.error(
+      "║  FATAL: Container runtime failed to start                      ║",
+    );
+    console.error(
+      "║                                                                ║",
+    );
+    console.error(
+      "║  Agents cannot run without a container runtime. To fix:        ║",
+    );
+    console.error(
+      "║  1. Ensure Docker is installed and running                     ║",
+    );
+    console.error(
+      "║  2. Run: docker info                                           ║",
+    );
+    console.error(
+      "║  3. Restart vt-claw                                           ║",
+    );
+    console.error(
+      "╚════════════════════════════════════════════════════════════════╝\n",
+    );
+    throw new Error("Container runtime is required but failed to start");
+  }
+}
+
+/** Kill orphaned vt-claw containers from previous runs. */
+export function cleanupOrphans(): void {
+  try {
+    const output = execSync(
+      `${CONTAINER_RUNTIME_BIN} ps --filter name=${CONTAINER_NAME_PREFIX} --format '{{.Names}}'`,
+      { stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8" },
+    );
+    const orphans = output.trim().split("\n").filter(Boolean);
+    for (const name of orphans) {
+      try {
+        execSync(stopContainer(name), { stdio: "pipe" });
+      } catch {
+        /* already stopped */
+      }
+    }
+    if (orphans.length > 0) {
+      logger.info(
+        { count: orphans.length, names: orphans },
+        "Stopped orphaned containers",
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, "Failed to clean up orphaned containers");
+  }
+}
 
 export interface ContainerInput {
   prompt: string;
@@ -145,7 +218,7 @@ export async function runContainerAgent(
 
   const mounts = buildVolumeMounts(channel);
   const safeName = channel.folder.replace(/[^a-zA-Z0-9-]/g, "-");
-  const containerName = `vt-claw-${safeName}-${Date.now()}`;
+  const containerName = `${CONTAINER_NAME_PREFIX}-${safeName}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.info(

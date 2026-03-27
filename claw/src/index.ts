@@ -4,11 +4,7 @@ import path from "path";
 import { logger } from "./logger.js";
 import { TIMEZONE, IDLE_TIMEOUT } from "./config.js";
 import { NewMessage, Channel, ChannelOpts, ChannelRuntime } from "./types.js";
-import { buildChannels, connectChannels } from "./channel-factory.js";
-import {
-  cleanupOrphans,
-  ensureContainerRuntimeRunning,
-} from "./container-runtime.js";
+import { buildChannels, connectChannels } from "./channel.js";
 import {
   initDatabase,
   getRouterState,
@@ -17,14 +13,17 @@ import {
   getMessagesSince,
   getAllTasks,
 } from "./db.js";
-import { startMessageLoop, formatMessages } from "./messages-loop.js";
-import { GroupQueue, buildGroups, writeTasksSnapshot } from "./groups.js";
+import { startMessageLoop, formatMessages, formatOutbound } from "./message.js";
+import { GroupQueue, buildGroups, writeTasksSnapshot } from "./group.js";
 import {
+  cleanupOrphans,
+  ensureContainerRuntimeRunning,
   runContainerAgent,
   ContainerInput,
   ContainerOutput,
-} from "./container-runner.js";
+} from "./container.js";
 import { startIpcWatcher } from "./ipc.js";
+import { startSchedulerLoop } from "./task.js";
 
 // 全局变量以及处理入口
 const groupQueue = new GroupQueue();
@@ -52,6 +51,14 @@ const runtime: ChannelRuntime = {
   findChannel: (jid: string) => {
     for (const ch of runtime.channels) {
       if (ch.jid === jid) {
+        return ch;
+      }
+    }
+    return null;
+  },
+  findChannelByFolder: (folder: string) => {
+    for (const ch of runtime.channels) {
+      if (ch.folder === folder) {
         return ch;
       }
     }
@@ -247,7 +254,6 @@ async function main(): Promise<void> {
 
   // 设置好处理消息的函数
   // Group = Channel + Container
-
   await buildChannels(runtime, channelOpts);
   await buildGroups(runtime);
   await connectChannels(runtime);
@@ -256,6 +262,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // 启动 IPC 监听，Group对应的消息
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = runtime.findChannel(jid);
@@ -263,6 +270,23 @@ async function main(): Promise<void> {
       return channel.sendMessage("text", text);
     },
     runtime: runtime,
+  });
+
+  // 启动 corn 定时任务监听
+  startSchedulerLoop({
+    runtime: runtime,
+    queue: groupQueue,
+    onProcess: (groupJid, proc, containerName, groupFolder) =>
+      groupQueue.registerProcess(groupJid, proc, containerName, groupFolder),
+    sendMessage: async (jid, rawText) => {
+      const channel = runtime.findChannel(jid);
+      if (!channel) {
+        logger.warn({ jid }, "No channel owns JID, cannot send message");
+        return;
+      }
+      const text = formatOutbound(rawText);
+      if (text) await channel.sendMessage("text", text);
+    },
   });
 
   groupQueue.setProcessMessagesFn(processGroupMessages);
@@ -280,7 +304,7 @@ const isDirectRun =
 
 if (isDirectRun) {
   main().catch((err) => {
-    logger.error({ err }, "Failed to start pi-claw");
+    logger.error({ err }, "Failed to start vt-claw");
     process.exit(1);
   });
 }

@@ -1,7 +1,7 @@
 import { ChannelRuntime, NewMessage } from "./types.js";
 import { getNewMessages, getMessagesSince } from "./db.js";
 import { TIMEZONE, MESSAGE_POLL_INTERVAL } from "./config.js";
-import { GroupQueue } from "./groups.js";
+import { GroupQueue } from "./group.js";
 import { logger } from "./logger.js";
 
 let messageLoopRunning = false;
@@ -20,7 +20,7 @@ export async function startMessageLoop(
     jids.push(ch.jid);
   }
 
-  logger.info(`Pi-Claw running...`);
+  logger.info(`VT-Claw running...`);
   while (true) {
     try {
       const { messages, newTimestamp } = getNewMessages(
@@ -53,8 +53,6 @@ export async function startMessageLoop(
             continue;
           }
 
-          // Pull all messages since lastAgentTimestamp so non-trigger
-          // context that accumulated between triggers is included.
           const allPending = getMessagesSince(
             chatJid,
             runtime.lastAgentTimestamp[chatJid] || "",
@@ -72,11 +70,7 @@ export async function startMessageLoop(
               messagesToSend[messagesToSend.length - 1].timestamp;
             runtime.saveState();
             // Show typing indicator while the container processes the piped message
-            channel
-              .setTyping?.(true)
-              ?.catch((err) =>
-                logger.warn({ chatJid, err }, "Failed to set typing indicator"),
-              );
+            channel.setTyping?.(true);
           } else {
             // No active container — enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
@@ -123,4 +117,14 @@ export function formatMessages(
   });
   const header = `<context timezone="${escapeXml(timezone)}" />\n`;
   return `${header}<messages>\n${lines.join("\n")}\n</messages>`;
+}
+
+export function stripInternalTags(text: string): string {
+  return text.replace(/<internal>[\s\S]*?<\/internal>/g, "").trim();
+}
+
+export function formatOutbound(rawText: string): string {
+  const text = stripInternalTags(rawText);
+  if (!text) return "";
+  return text;
 }

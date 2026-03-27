@@ -5,9 +5,8 @@ import { CronExpressionParser } from "cron-parser";
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from "./config.js";
 import { createTask, deleteTask, getTaskById, updateTask } from "./db.js";
-import { isValidGroupFolder } from "./groups.js";
 import { logger } from "./logger.js";
-import { Channel, ChannelRuntime } from "./types.js";
+import { ChannelRuntime } from "./types.js";
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
