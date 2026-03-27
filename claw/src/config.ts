@@ -13,8 +13,21 @@ export const GROUPS_DIR = path.resolve(
 );
 export const PI_DIR = path.resolve(PROJECT_ROOT, "..", "home", "pi");
 
+// Container configure
+export const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || "pi-agent:latest";
+export const CONTAINER_TIMEOUT = parseInt(
+  process.env.CONTAINER_TIMEOUT || "1800000",
+  10,
+);
+export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
+  process.env.CONTAINER_MAX_OUTPUT_SIZE || "10485760",
+  10,
+); // 10MB default
+
 // Timing and container setup
-export const POLL_INTERVAL = 2000;
+export const IPC_POLL_INTERVAL = 1000;
+export const MESSAGE_POLL_INTERVAL = 2000;
+export const SCHEDULER_POLL_INTERVAL = 60000;
 export const MAX_CONCURRENT_CONTAINERS = 2;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || "1800000", 10); // 30min default — how long to keep container alive after last result
 

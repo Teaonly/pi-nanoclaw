@@ -1,6 +1,6 @@
 import { ChannelRuntime, NewMessage } from "./types.js";
 import { getNewMessages, getMessagesSince } from "./db.js";
-import { TIMEZONE, POLL_INTERVAL } from "./config.js";
+import { TIMEZONE, MESSAGE_POLL_INTERVAL } from "./config.js";
 import { GroupQueue } from "./groups.js";
 import { logger } from "./logger.js";
 
@@ -19,14 +19,6 @@ export async function startMessageLoop(
   for (const ch of runtime.channels) {
     jids.push(ch.jid);
   }
-  let findChannel = (jid: string) => {
-    for (const ch of runtime.channels) {
-      if (ch.jid === jid) {
-        return ch;
-      }
-    }
-    return null;
-  };
 
   logger.info(`Pi-Claw running...`);
   while (true) {
@@ -55,7 +47,7 @@ export async function startMessageLoop(
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const channel = findChannel(chatJid);
+          const channel = runtime.findChannel(chatJid);
           if (!channel) {
             logger.warn({ chatJid }, "No channel owns JID, skipping messages");
             continue;
@@ -94,7 +86,7 @@ export async function startMessageLoop(
     } catch (err) {
       logger.error({ err }, "Error in message loop");
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    await new Promise((resolve) => setTimeout(resolve, MESSAGE_POLL_INTERVAL));
   }
 }
 

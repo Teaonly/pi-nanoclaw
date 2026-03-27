@@ -395,13 +395,13 @@ function assertValidGroupFolder(folder: string): void {
     throw new Error(`Invalid group folder "${folder}"`);
   }
 }
-function resolveGroupFolderPath(folder: string): string {
+export function resolveGroupFolderPath(folder: string): string {
   assertValidGroupFolder(folder);
   const groupPath = path.resolve(GROUPS_DIR, folder);
   ensureWithinBase(GROUPS_DIR, groupPath);
   return groupPath;
 }
-function resolveGroupIpcPath(folder: string): string {
+export function resolveGroupIpcPath(folder: string): string {
   assertValidGroupFolder(folder);
   const ipcBaseDir = path.resolve(DATA_DIR, "ipc");
   const ipcPath = path.resolve(ipcBaseDir, folder);
@@ -455,4 +455,27 @@ export async function buildGroups(runtime: ChannelRuntime): Promise<void> {
     fs.mkdirSync(groupAgentRunnerDir, { recursive: true });
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }
+}
+
+export function writeTasksSnapshot(
+  groupFolder: string,
+  tasks: Array<{
+    id: string;
+    groupFolder: string;
+    prompt: string;
+    schedule_type: string;
+    schedule_value: string;
+    status: string;
+    next_run: string | null;
+  }>,
+): void {
+  // Write filtered tasks to the group's IPC directory
+  const groupIpcDir = resolveGroupIpcPath(groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  // Main sees all tasks, others only see their own
+  const filteredTasks = tasks.filter((t) => t.groupFolder === groupFolder);
+
+  const tasksFile = path.join(groupIpcDir, "current_tasks.json");
+  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
 }

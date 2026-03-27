@@ -15,9 +15,16 @@ import {
   setRouterState,
   storeMessage,
   getMessagesSince,
+  getAllTasks,
 } from "./db.js";
 import { startMessageLoop, formatMessages } from "./messages-loop.js";
-import { GroupQueue, buildGroups } from "./groups.js";
+import { GroupQueue, buildGroups, writeTasksSnapshot } from "./groups.js";
+import {
+  runContainerAgent,
+  ContainerInput,
+  ContainerOutput,
+} from "./container-runner.js";
+import { startIpcWatcher } from "./ipc.js";
 
 // 全局变量以及处理入口
 const groupQueue = new GroupQueue();
@@ -42,24 +49,125 @@ const runtime: ChannelRuntime = {
       JSON.stringify(runtime.lastAgentTimestamp),
     );
   },
+  findChannel: (jid: string) => {
+    for (const ch of runtime.channels) {
+      if (ch.jid === jid) {
+        return ch;
+      }
+    }
+    return null;
+  },
 };
 
 // Message entry and loop
 const channelOpts: ChannelOpts = {
   onMessage: (jid: string, message: NewMessage) => {
-    if (checkJidValid(jid)) {
+    if (runtime.findChannel(jid)) {
       storeMessage(message);
     }
   },
 };
 
-function checkJidValid(jid: string): Channel | null {
-  for (const ch of runtime.channels) {
-    if (ch.jid == jid) {
-      return ch;
+async function runAgentInContainer(
+  targetChannel: Channel,
+  prompt: string,
+): Promise<[boolean, boolean]> {
+  // 1. Update tasks snapshot for container to read (filtered by group)
+  const tasks = getAllTasks();
+  writeTasksSnapshot(
+    targetChannel.folder,
+    tasks.map((t) => ({
+      id: t.id,
+      groupFolder: t.group_folder,
+      prompt: t.prompt,
+      schedule_type: t.schedule_type,
+      schedule_value: t.schedule_value,
+      status: t.status,
+      next_run: t.next_run,
+    })),
+  );
+
+  // 2. Track idle timer for closing stdin when agent is idle
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      logger.debug(
+        { group: targetChannel.name },
+        "Idle timeout, closing container stdin",
+      );
+      groupQueue.closeStdin(targetChannel.jid);
+    }, IDLE_TIMEOUT);
+  };
+
+  // 3. Prepare input
+  const input: ContainerInput = {
+    prompt: prompt,
+    groupFolder: targetChannel.folder,
+    chatJid: targetChannel.jid,
+  };
+  let outputSentToUser = false;
+  let hadError = false;
+
+  // 4. Executing docker cli
+  try {
+    const output = await runContainerAgent(
+      targetChannel,
+      input,
+      (proc, containerName) =>
+        groupQueue.registerProcess(
+          targetChannel.jid,
+          proc,
+          containerName,
+          targetChannel.folder,
+        ),
+      async (result: ContainerOutput) => {
+        // Streaming output callback — called for each agent result
+        if (result.result) {
+          const raw =
+            typeof result.result === "string"
+              ? result.result
+              : JSON.stringify(result.result);
+          // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+          const text = raw
+            .replace(/<internal>[\s\S]*?<\/internal>/g, "")
+            .trim();
+          logger.info(
+            { group: targetChannel.name },
+            `Agent output: ${raw.slice(0, 200)}`,
+          );
+          if (text) {
+            await targetChannel.sendMessage("text", text);
+            outputSentToUser = true;
+          }
+          // Only reset idle timer on actual results, not session-update markers (result: null)
+          resetIdleTimer();
+        }
+        if (result.status === "success") {
+          groupQueue.notifyIdle(targetChannel.jid);
+        }
+        if (result.status === "error") {
+          hadError = true;
+        }
+      },
+    );
+
+    if (output.newSessionId) {
+      // TODO
     }
+
+    if (output.status === "error" || hadError) {
+      logger.error(
+        { group: targetChannel.name, error: output.error },
+        "Container agent error",
+      );
+      return [false, outputSentToUser];
+    }
+    return [true, outputSentToUser];
+  } catch (err) {
+    logger.error({ group: targetChannel.name, err }, "Agent error");
+    return [false, outputSentToUser];
   }
-  return null;
 }
 
 /**
@@ -67,7 +175,7 @@ function checkJidValid(jid: string): Channel | null {
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const targetChannel = checkJidValid(chatJid);
+  const targetChannel = runtime.findChannel(chatJid);
   if (targetChannel === null) {
     logger.error(`JID: ${chatJid} can't been found in channels.`);
     return false;
@@ -90,77 +198,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     "Processing messages",
   );
 
-  // Track idle timer for closing stdin when agent is idle
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const resetIdleTimer = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      logger.debug(
-        { group: targetChannel.name },
-        "Idle timeout, closing container stdin",
-      );
-      groupQueue.closeStdin(chatJid);
-    }, IDLE_TIMEOUT);
-  };
-
   await targetChannel.setTyping?.(true);
-  let hadError = false;
-  let outputSentToUser = false;
-
-  /*
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
-      }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
-
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
-
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
-  */
-  let output: "success" | "error" = "error";
-
+  const [isSuccess, hasOutput] = await runAgentInContainer(
+    targetChannel,
+    prompt,
+  );
   await targetChannel.setTyping?.(false);
-  if (idleTimer) clearTimeout(idleTimer);
 
-  if (output === "error" || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
-    if (outputSentToUser) {
-      logger.warn(
-        { group: targetChannel.name },
-        "Agent error after output was sent, skipping cursor rollback to prevent duplicates",
-      );
-      return true;
-    }
-    // Roll back cursor so retries can re-process these messages
-    runtime.lastAgentTimestamp[chatJid] = previousCursor;
-    runtime.saveState();
+  if (isSuccess) {
+    return true;
+  }
+
+  // If we already sent output to the user, don't roll back the cursor —
+  // the user got their response and re-processing would send duplicates.
+  if (hasOutput) {
     logger.warn(
       { group: targetChannel.name },
-      "Agent error, rolled back message cursor for retry",
+      "Agent error after output was sent, skipping cursor rollback to prevent duplicates",
     );
-    return false;
+    return true;
   }
-  return true;
+  // Roll back cursor so retries can re-process these messages
+  runtime.lastAgentTimestamp[chatJid] = previousCursor;
+  runtime.saveState();
+  logger.warn(
+    { group: targetChannel.name },
+    "Agent error, rolled back message cursor for retry",
+  );
+  return false;
 }
 
 async function main(): Promise<void> {
@@ -182,11 +247,25 @@ async function main(): Promise<void> {
 
   // 设置好处理消息的函数
   // Group = Channel + Container
-  groupQueue.setProcessMessagesFn(processGroupMessages);
+
   await buildChannels(runtime, channelOpts);
   await buildGroups(runtime);
   await connectChannels(runtime);
+  if (runtime.channels.length === 0) {
+    logger.fatal("No channels connected");
+    process.exit(1);
+  }
 
+  startIpcWatcher({
+    sendMessage: (jid, text) => {
+      const channel = runtime.findChannel(jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      return channel.sendMessage("text", text);
+    },
+    runtime: runtime,
+  });
+
+  groupQueue.setProcessMessagesFn(processGroupMessages);
   startMessageLoop(runtime, groupQueue).catch((err: Error) => {
     logger.fatal({ err }, "Message loop crashed unexpectedly");
     process.exit(1);

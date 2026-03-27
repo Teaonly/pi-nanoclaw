@@ -30,4 +30,19 @@ export interface ChannelRuntime {
   channels: Channel[];
   loadState(): void;
   saveState(): void;
+  findChannel(jid: string): Channel | null;
+}
+
+export interface ScheduledTask {
+  id: string;
+  jid: string;
+  group_folder: string;
+  prompt: string;
+  schedule_type: "cron" | "interval" | "once";
+  schedule_value: string;
+  next_run: string | null;
+  last_run: string | null;
+  last_result: string | null;
+  status: "active" | "paused" | "completed";
+  created_at: string;
 }

@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
-import { NewMessage } from "./types.js";
+import { NewMessage, ScheduledTask } from "./types.js";
 import { STORE_DIR } from "./config.js";
 
 let db: Database.Database;
@@ -127,15 +127,12 @@ export function setRouterState(key: string, value: string): void {
   ).run(key, value);
 }
 
-/*
-// --- Tasks accessors ---
-
 export function createTask(
-  task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
+  task: Omit<ScheduledTask, "last_run" | "last_result">,
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    INSERT INTO scheduled_tasks (id, group_folder, jid, prompt, schedule_type, schedule_value, next_run, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
@@ -145,7 +142,6 @@ export function createTask(
     task.prompt,
     task.schedule_type,
     task.schedule_value,
-    task.context_mode || 'isolated',
     task.next_run,
     task.status,
     task.created_at,
@@ -153,7 +149,7 @@ export function createTask(
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {
-  return db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as
+  return db.prepare("SELECT * FROM scheduled_tasks WHERE id = ?").get(id) as
     | ScheduledTask
     | undefined;
 }
@@ -161,14 +157,14 @@ export function getTaskById(id: string): ScheduledTask | undefined {
 export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
   return db
     .prepare(
-      'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
+      "SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC",
     )
     .all(groupFolder) as ScheduledTask[];
 }
 
 export function getAllTasks(): ScheduledTask[] {
   return db
-    .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
+    .prepare("SELECT * FROM scheduled_tasks ORDER BY created_at DESC")
     .all() as ScheduledTask[];
 }
 
@@ -177,7 +173,7 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      "prompt" | "schedule_type" | "schedule_value" | "next_run" | "status"
     >
   >,
 ): void {
@@ -185,23 +181,23 @@ export function updateTask(
   const values: unknown[] = [];
 
   if (updates.prompt !== undefined) {
-    fields.push('prompt = ?');
+    fields.push("prompt = ?");
     values.push(updates.prompt);
   }
   if (updates.schedule_type !== undefined) {
-    fields.push('schedule_type = ?');
+    fields.push("schedule_type = ?");
     values.push(updates.schedule_type);
   }
   if (updates.schedule_value !== undefined) {
-    fields.push('schedule_value = ?');
+    fields.push("schedule_value = ?");
     values.push(updates.schedule_value);
   }
   if (updates.next_run !== undefined) {
-    fields.push('next_run = ?');
+    fields.push("next_run = ?");
     values.push(updates.next_run);
   }
   if (updates.status !== undefined) {
-    fields.push('status = ?');
+    fields.push("status = ?");
     values.push(updates.status);
   }
 
@@ -209,14 +205,14 @@ export function updateTask(
 
   values.push(id);
   db.prepare(
-    `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
+    `UPDATE scheduled_tasks SET ${fields.join(", ")} WHERE id = ?`,
   ).run(...values);
 }
 
 export function deleteTask(id: string): void {
   // Delete child records first (FK constraint)
-  db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
-  db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+  db.prepare("DELETE FROM task_run_logs WHERE task_id = ?").run(id);
+  db.prepare("DELETE FROM scheduled_tasks WHERE id = ?").run(id);
 }
 
 export function getDueTasks(): ScheduledTask[] {
@@ -246,5 +242,3 @@ export function updateTaskAfterRun(
   `,
   ).run(nextRun, now, lastResult, nextRun, id);
 }
-
-*/

@@ -69,7 +69,7 @@ async function sendMessage(
 }
 
 export class WeChatChannel implements Channel {
-  name = "WeChat";
+  name = "";
   jid = "";
   folder = "";
   private connected = false;
@@ -83,6 +83,7 @@ export class WeChatChannel implements Channel {
       WX_ACCOUNT_ID: auth.WX_ACCOUNT_ID,
       WX_USER_ID: auth.WX_USER_ID,
     };
+    this.name = "WeChat-${auth.WX_USER_ID}".slice(15);
     this.jid = `wx-${auth.WX_USER_ID}`;
     this.folder = "wx-" + auth.WX_ACCOUNT_ID.split("@")[0];
     this.opts = opts;
