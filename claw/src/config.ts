@@ -36,6 +36,8 @@ export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || "1800000", 10);
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-// These marker string must same with container
+// These const must be same with container
 export const OUTPUT_START_MARKER = "---VT-CLAW_OUTPUT_START---";
 export const OUTPUT_END_MARKER = "---VT-CLAW_OUTPUT_END---";
+export const JID_ENV_NAME = "VTCLAW_CHAT_JID";
+export const FOLDER_ENV_NAME = "VTCLAW_GROUP_FOLDER";

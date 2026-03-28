@@ -23,11 +23,10 @@ import {
   writeTool,
   editTool,
   bashTool,
+  SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import {
-  sendMessageTool, 
-  scheduleTaskTool,
-  listTasksTool
+  sendMessageTool,
 } from "./ipctools.js"
 
 interface ContainerInput {
@@ -209,10 +208,12 @@ async function runQuery(
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   
-  const tools = [readTool, writeTool, editTool, bashTool, sendMessageTool, scheduleTaskTool, listTasksTool];
+  const extTools = [sendMessageTool];
   const { session } = await createAgentSession({
-    tools: tools,
+    customTools: extTools,
   });
+
+  console.log( session.getActiveToolNames() );
 
   session.subscribe((event) => {
     switch (event.type) {
@@ -353,4 +354,7 @@ async function main(): Promise<void> {
   }
 }
 
+console.log("#### Contianer Current Directory: " + process.cwd());
+console.log("#### " + process.env.http_proxy);
+console.log("#### " + process.env.https_proxy);
 main();

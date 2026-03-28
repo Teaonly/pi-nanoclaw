@@ -15,7 +15,9 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
   OUTPUT_START_MARKER,
-  OUTPUT_END_MARKER
+  OUTPUT_END_MARKER,
+  JID_ENV_NAME,
+  FOLDER_ENV_NAME,
 } from "./config.js";
 import { readContainerEnvFile } from "./env.js";
 import { resolveGroupFolderPath, resolveGroupIpcPath } from "./group.js";
@@ -170,6 +172,7 @@ function buildVolumeMounts(targetChannel: Channel): VolumeMount[] {
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  channel: Channel,
 ): string[] {
   const args: string[] = ["run", "-i", "--rm", "--name", containerName];
 
@@ -181,6 +184,10 @@ function buildContainerArgs(
   for (const [key, value] of Object.entries(containerEnv)) {
     args.push("-e", `${key}=${value}`);
   }
+
+  // Pass ChatJID and Folder
+  args.push("-e", `${JID_ENV_NAME}=${channel.jid}`);
+  args.push("-e", `${FOLDER_ENV_NAME}=${channel.jid}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -219,7 +226,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(channel);
   const safeName = channel.folder.replace(/[^a-zA-Z0-9-]/g, "-");
   const containerName = `${CONTAINER_NAME_PREFIX}-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, channel);
 
   logger.info(
     {
