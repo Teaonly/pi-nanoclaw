@@ -4,7 +4,7 @@ import path from "path";
 import { CronExpressionParser } from "cron-parser";
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from "./config.js";
-import { createTask, deleteTask, getTaskById, updateTask } from "./db.js";
+import { createTask, deleteTask, getTaskById } from "./db.js";
 import { logger } from "./logger.js";
 import { ChannelRuntime } from "./types.js";
 
@@ -40,7 +40,6 @@ export function startIpcWatcher(deps: IpcDeps): void {
     }
 
     const runtime = deps.runtime;
-
     for (const sourceGroup of groupFolders) {
       const messagesDir = path.join(ipcBaseDir, sourceGroup, "messages");
       const tasksDir = path.join(ipcBaseDir, sourceGroup, "tasks");
@@ -150,7 +149,7 @@ export async function processTaskIpc(
   deps: IpcDeps,
 ): Promise<void> {
   const runtime = deps.runtime;
-
+  logger.info(data, "Task IPC data");
   switch (data.type) {
     case "schedule_task":
       if (
@@ -238,42 +237,8 @@ export async function processTaskIpc(
           { taskId, sourceGroup, targetFolder },
           "Task created via IPC",
         );
-      }
-      break;
-
-    case "pause_task":
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (task && task.group_folder === sourceGroup) {
-          updateTask(data.taskId, { status: "paused" });
-          logger.info(
-            { taskId: data.taskId, sourceGroup },
-            "Task paused via IPC",
-          );
-        } else {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            "Unauthorized task pause attempt",
-          );
-        }
-      }
-      break;
-
-    case "resume_task":
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (task && task.group_folder === sourceGroup) {
-          updateTask(data.taskId, { status: "active" });
-          logger.info(
-            { taskId: data.taskId, sourceGroup },
-            "Task resumed via IPC",
-          );
-        } else {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            "Unauthorized task resume attempt",
-          );
-        }
+      } else {
+        logger.error(data, "schedule_task json data error");
       }
       break;
 
@@ -295,69 +260,6 @@ export async function processTaskIpc(
       }
       break;
 
-    case "update_task":
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (!task) {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            "Task not found for update",
-          );
-          break;
-        }
-        if (task.group_folder !== sourceGroup) {
-          logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            "Unauthorized task update attempt",
-          );
-          break;
-        }
-
-        const updates: Parameters<typeof updateTask>[1] = {};
-        if (data.prompt !== undefined) updates.prompt = data.prompt;
-        if (data.schedule_type !== undefined)
-          updates.schedule_type = data.schedule_type as
-            | "cron"
-            | "interval"
-            | "once";
-        if (data.schedule_value !== undefined)
-          updates.schedule_value = data.schedule_value;
-
-        // Recompute next_run if schedule changed
-        if (data.schedule_type || data.schedule_value) {
-          const updatedTask = {
-            ...task,
-            ...updates,
-          };
-          if (updatedTask.schedule_type === "cron") {
-            try {
-              const interval = CronExpressionParser.parse(
-                updatedTask.schedule_value,
-                { tz: TIMEZONE },
-              );
-              updates.next_run = interval.next().toISOString();
-            } catch {
-              logger.warn(
-                { taskId: data.taskId, value: updatedTask.schedule_value },
-                "Invalid cron in task update",
-              );
-              break;
-            }
-          } else if (updatedTask.schedule_type === "interval") {
-            const ms = parseInt(updatedTask.schedule_value, 10);
-            if (!isNaN(ms) && ms > 0) {
-              updates.next_run = new Date(Date.now() + ms).toISOString();
-            }
-          }
-        }
-
-        updateTask(data.taskId, updates);
-        logger.info(
-          { taskId: data.taskId, sourceGroup, updates },
-          "Task updated via IPC",
-        );
-      }
-      break;
     default:
       logger.warn({ type: data.type }, "Unknown IPC task type");
   }

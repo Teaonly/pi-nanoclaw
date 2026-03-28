@@ -19,14 +19,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
 	createAgentSession,
-  readTool,
-  writeTool,
-  editTool,
-  bashTool,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import {
   sendMessageTool,
+  scheduleTaskTool,
+  listTasksTool,
+  cancelTaskTool
 } from "./ipctools.js"
 
 interface ContainerInput {
@@ -204,11 +203,10 @@ async function runQuery(
   prompt: string,
   sessionId: string | undefined,
   containerInput: ContainerInput,
-  sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   
-  const extTools = [sendMessageTool];
+  const extTools = [sendMessageTool, scheduleTaskTool, listTasksTool, cancelTaskTool];
   const { session } = await createAgentSession({
     customTools: extTools,
   });
@@ -279,13 +277,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Build SDK env: merge secrets into process.env for the SDK only.
-  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
-  const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
-    sdkEnv[key] = value;
-  }
-
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
@@ -310,7 +301,7 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, containerInput, resumeAt);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }

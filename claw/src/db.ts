@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { NewMessage, ScheduledTask } from "./types.js";
 import { STORE_DIR } from "./config.js";
+import { logger } from "./logger.js";
 
 let db: Database.Database;
 
@@ -133,7 +134,7 @@ export function createTask(
   db.prepare(
     `
     INSERT INTO scheduled_tasks (id, group_folder, jid, prompt, schedule_type, schedule_value, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
