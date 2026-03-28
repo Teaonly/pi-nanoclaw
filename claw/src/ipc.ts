@@ -4,7 +4,8 @@ import path from "path";
 import { CronExpressionParser } from "cron-parser";
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from "./config.js";
-import { createTask, deleteTask, getTaskById } from "./db.js";
+import { createTask, deleteTask, getAllTasks, getTaskById } from "./db.js";
+import { writeTasksSnapshot } from "./group.js";
 import { logger } from "./logger.js";
 import { ChannelRuntime } from "./types.js";
 
@@ -233,6 +234,19 @@ export async function processTaskIpc(
           status: "active",
           created_at: new Date().toISOString(),
         });
+        // Immediately update tasks snapshot so running container can see it
+        writeTasksSnapshot(
+          targetFolder,
+          getAllTasks().map((t) => ({
+            id: t.id,
+            groupFolder: t.group_folder,
+            prompt: t.prompt,
+            schedule_type: t.schedule_type,
+            schedule_value: t.schedule_value,
+            status: t.status,
+            next_run: t.next_run,
+          })),
+        );
         logger.info(
           { taskId, sourceGroup, targetFolder },
           "Task created via IPC",
@@ -247,6 +261,19 @@ export async function processTaskIpc(
         const task = getTaskById(data.taskId);
         if (task && task.group_folder === sourceGroup) {
           deleteTask(data.taskId);
+          // Update tasks snapshot immediately
+          writeTasksSnapshot(
+            sourceGroup,
+            getAllTasks().map((t) => ({
+              id: t.id,
+              groupFolder: t.group_folder,
+              prompt: t.prompt,
+              schedule_type: t.schedule_type,
+              schedule_value: t.schedule_value,
+              status: t.status,
+              next_run: t.next_run,
+            })),
+          );
           logger.info(
             { taskId: data.taskId, sourceGroup },
             "Task cancelled via IPC",
