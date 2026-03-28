@@ -16,9 +16,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import {
-	createAgentSession,
+  createAgentSession,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import {
@@ -45,63 +44,9 @@ interface ContainerOutput {
   error?: string;
 }
 
-interface SessionEntry {
-  sessionId: string;
-  fullPath: string;
-  summary: string;
-  firstPrompt: string;
-}
-
-interface SessionsIndex {
-  entries: SessionEntry[];
-}
-
-interface SDKUserMessage {
-  type: 'user';
-  message: { role: 'user'; content: string };
-  parent_tool_use_id: null;
-  session_id: string;
-}
-
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
-
-/**
- * Push-based async iterable for streaming user messages to the SDK.
- * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
- */
-class MessageStream {
-  private queue: SDKUserMessage[] = [];
-  private waiting: (() => void) | null = null;
-  private done = false;
-
-  push(text: string): void {
-    this.queue.push({
-      type: 'user',
-      message: { role: 'user', content: text },
-      parent_tool_use_id: null,
-      session_id: '',
-    });
-    this.waiting?.();
-  }
-
-  end(): void {
-    this.done = true;
-    this.waiting?.();
-  }
-
-  async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
-    while (true) {
-      while (this.queue.length > 0) {
-        yield this.queue.shift()!;
-      }
-      if (this.done) return;
-      await new Promise<void>(r => { this.waiting = r; });
-      this.waiting = null;
-    }
-  }
-}
 
 async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -195,23 +140,48 @@ function waitForIpcMessage(): Promise<string | null> {
 
 /**
  * Run a single query and stream results via writeOutput.
- * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
- * allowing agent teams subagents to run to completion.
- * Also pipes IPC messages into the stream during the query.
+ *
+ * Session persistence strategy:
+ *   - If sessionId is provided, try to open existing session
+ *   - If not found or no sessionId, create new persistent session
+ *   - Sessions are stored in groupFolder/sessions/
  */
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
   containerInput: ContainerInput,
-  resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
-  
+): Promise<{ newSessionId?: string; closedDuringQuery: boolean }> {
+
   const extTools = [sendMessageTool, scheduleTaskTool, listTasksTool, cancelTaskTool];
+
+  let sessionManager;
+  if (sessionId) {
+    // Try to find and open existing session
+    try {
+      const sessions = await SessionManager.list(process.cwd());
+      const existingSession = sessions.find(s => s.id === sessionId || s.path.includes(sessionId));
+
+      if (existingSession) {
+        log(`Resuming existing session: ${existingSession.id.slice(0, 8)}...`);
+        sessionManager = SessionManager.open(existingSession.path);
+      } else {
+        log(`Session ${sessionId.slice(0, 8)}... not found, creating new session`);
+        sessionManager = SessionManager.create(process.cwd());
+      }
+    } catch (err) {
+      log(`Error listing sessions, creating new: ${err instanceof Error ? err.message : String(err)}`);
+      sessionManager = SessionManager.create(process.cwd());
+    }
+  } else {
+    // No sessionId provided, create new persistent session
+    log('Creating new persistent session');
+    sessionManager = SessionManager.create(process.cwd());
+  }
+
   const { session } = await createAgentSession({
+    sessionManager: sessionManager,
     customTools: extTools,
   });
-
-  console.log( session.getActiveToolNames() );
 
   session.subscribe((event) => {
     switch (event.type) {
@@ -229,12 +199,12 @@ async function runQuery(
     }
   });
 
-  await session.prompt( prompt);
+  await session.prompt(prompt);
   const newSessionId = session.sessionId;
   const last = session.state.messages.length - 1;
   const msg = session.state.messages[last];
   if (msg.role === "assistant") {
-    if ( msg.errorMessage ) {
+    if (msg.errorMessage) {
       writeOutput({
         status: 'error',
         result: msg.errorMessage,
@@ -251,8 +221,8 @@ async function runQuery(
         }
       });
     }
-  } 
-  
+  }
+
   return {
     newSessionId: session.sessionId,
     closedDuringQuery: false
@@ -296,17 +266,13 @@ async function main(): Promise<void> {
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
-  let resumeAt: string | undefined;
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
+      log(`Starting query (session: ${sessionId || 'new'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, containerInput, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, containerInput);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
       }
 
       // If _close was consumed during the query, exit immediately.
