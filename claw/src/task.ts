@@ -139,6 +139,7 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
+  const sessionId = deps.runtime.sessionIDs[task.jid];
   try {
     const output = await runContainerAgent(
       group,
@@ -146,6 +147,7 @@ async function runTask(
         prompt: task.prompt,
         groupFolder: task.group_folder,
         chatJid: task.jid,
+        sessionId: sessionId,
         isScheduledTask: true,
       },
       (proc, containerName) =>

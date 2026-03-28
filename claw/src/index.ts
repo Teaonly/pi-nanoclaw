@@ -30,6 +30,7 @@ const groupQueue = new GroupQueue();
 const runtime: ChannelRuntime = {
   lastTimestamp: "",
   lastAgentTimestamp: {},
+  sessionIDs: {},
   channels: [],
   loadState: () => {
     runtime.lastTimestamp = getRouterState("last_timestamp") || "";
@@ -40,12 +41,23 @@ const runtime: ChannelRuntime = {
       logger.warn("Corrupted last_agent_timestamp in DB, resetting");
       runtime.lastAgentTimestamp = {};
     }
+    const agentId = getRouterState("session_id");
+    try {
+      runtime.sessionIDs = agentId ? JSON.parse(agentId) : {};
+    } catch {
+      logger.warn("Corrupted sessionID in DB, resetting");
+      runtime.sessionIDs = {};
+    }
   },
   saveState: () => {
     setRouterState("last_timestamp", runtime.lastTimestamp);
     setRouterState(
       "last_agent_timestamp",
       JSON.stringify(runtime.lastAgentTimestamp),
+    );
+    setRouterState(
+      "session_id",
+      JSON.stringify(runtime.sessionIDs),
     );
   },
   findChannel: (jid: string) => {
@@ -108,8 +120,10 @@ async function runAgentInContainer(
   };
 
   // 3. Prepare input
+  const sessionId = runtime.sessionIDs[targetChannel.jid];
   const input: ContainerInput = {
     prompt: prompt,
+    sessionId: sessionId,
     groupFolder: targetChannel.folder,
     chatJid: targetChannel.jid,
   };
@@ -160,7 +174,8 @@ async function runAgentInContainer(
     );
 
     if (output.newSessionId) {
-      // TODO
+      runtime.sessionIDs[targetChannel.jid] = output.newSessionId;
+      runtime.saveState();
     }
 
     if (output.status === "error" || hadError) {

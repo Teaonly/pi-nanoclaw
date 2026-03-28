@@ -30,6 +30,7 @@ export interface ChannelOpts {
 export interface ChannelRuntime {
   lastTimestamp: string;
   lastAgentTimestamp: Record<string, string>;
+  sessionIDs: Record<string, string>;
   channels: Channel[];
   loadState(): void;
   saveState(): void;
