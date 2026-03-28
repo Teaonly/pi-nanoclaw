@@ -213,8 +213,6 @@ export function updateTask(
 }
 
 export function deleteTask(id: string): void {
-  // Delete child records first (FK constraint)
-  db.prepare("DELETE FROM task_run_logs WHERE task_id = ?").run(id);
   db.prepare("DELETE FROM scheduled_tasks WHERE id = ?").run(id);
 }
 

@@ -187,7 +187,7 @@ function buildContainerArgs(
 
   // Pass ChatJID and Folder
   args.push("-e", `${JID_ENV_NAME}=${channel.jid}`);
-  args.push("-e", `${FOLDER_ENV_NAME}=${channel.jid}`);
+  args.push("-e", `${FOLDER_ENV_NAME}=${channel.folder}`);
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

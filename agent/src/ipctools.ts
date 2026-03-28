@@ -142,23 +142,16 @@ const listTasksSchema = Type.Object({});
 export const listTasksTool: AgentTool<typeof listTasksSchema> = {
   name: "list_tasks",
   label: "List Tasks",
-  description: "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
+  description: "List all scheduled tasks.",
   parameters: listTasksSchema,
 
   execute: async (_toolCallId: string, _args: Static<typeof listTasksSchema>, _signal?: AbortSignal) => {
     const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
-
     try {
       if (!fs.existsSync(tasksFile)) {
         return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }], details: undefined };
       }
-
-      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
-
-      const tasks = groupFolder === 'main'
-        ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
-
+      const tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
       if (tasks.length === 0) {
         return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }], details: undefined };
       }

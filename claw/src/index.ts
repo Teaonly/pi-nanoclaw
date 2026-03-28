@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 
 import { logger } from "./logger.js";
-import { TIMEZONE, IDLE_TIMEOUT } from "./config.js";
+import { TIMEZONE } from "./config.js";
 import { NewMessage, Channel, ChannelOpts, ChannelRuntime } from "./types.js";
 import { buildChannels, connectChannels } from "./channel.js";
 import {
@@ -106,20 +106,7 @@ async function runAgentInContainer(
     })),
   );
 
-  // 2. Track idle timer for closing stdin when agent is idle
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const resetIdleTimer = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      logger.debug(
-        { group: targetChannel.name },
-        "Idle timeout, closing container stdin",
-      );
-      groupQueue.closeStdin(targetChannel.jid);
-    }, IDLE_TIMEOUT);
-  };
-
-  // 3. Prepare input
+  // 2. Prepare input
   const sessionId = runtime.sessionIDs[targetChannel.jid];
   const input: ContainerInput = {
     prompt: prompt,
@@ -130,7 +117,7 @@ async function runAgentInContainer(
   let outputSentToUser = false;
   let hadError = false;
 
-  // 4. Executing docker cli
+  // 3. Executing docker cli
   try {
     const output = await runContainerAgent(
       targetChannel,
@@ -161,8 +148,6 @@ async function runAgentInContainer(
             await targetChannel.sendMessage("text", text);
             outputSentToUser = true;
           }
-          // Only reset idle timer on actual results, not session-update markers (result: null)
-          resetIdleTimer();
         }
         if (result.status === "success") {
           groupQueue.notifyIdle(targetChannel.jid);
