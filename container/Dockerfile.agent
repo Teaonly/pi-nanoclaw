@@ -14,8 +14,8 @@ WORKDIR /app
 COPY agent/package*.json ./
 
 # Install dependencies
-ENV http_proxy="http://192.168.233.37:7078"
-ENV https_proxy="http://192.168.233.37:7078"
+#ENV http_proxy="http://192.168.233.37:7078"
+#ENV https_proxy="http://192.168.233.37:7078"
 RUN npm install
 
 # Copy and build TypeScript source code

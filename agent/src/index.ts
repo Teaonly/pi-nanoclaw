@@ -19,6 +19,7 @@ import path from 'path';
 import {
   createAgentSession,
   SessionManager,
+  DefaultResourceLoader,
 } from "@mariozechner/pi-coding-agent";
 import {
   sendMessageTool,
@@ -33,8 +34,6 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isScheduledTask?: boolean;
-  assistantName?: string;
-  secrets?: Record<string, string>;
 }
 
 interface ContainerOutput {
@@ -138,6 +137,26 @@ function waitForIpcMessage(): Promise<string | null> {
   });
 }
 
+const SYSTEM_PROMPT = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+Available tools:
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make surgical edits to files (find exact text and replace)
+- write: Create or overwrite files
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+
+Guidelines:
+- Use bash for file operations like ls, rg, find
+- Use read to examine files before editing. You must use this tool instead of cat or sed.
+- Use edit for precise changes (old text must match exactly)
+- Use write only for new files or complete rewrites
+- When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did
+- Be concise in your responses
+- Show file paths clearly when working with files
+`;
+
 /**
  * Run a single query and stream results via writeOutput.
  *
@@ -146,14 +165,12 @@ function waitForIpcMessage(): Promise<string | null> {
  *   - If not found or no sessionId, create new persistent session
  *   - Sessions are stored in groupFolder/sessions/
  */
-async function runQuery(
+async function runQuery (
   prompt: string,
-  sessionId: string | undefined,
   containerInput: ContainerInput,
 ): Promise<{ newSessionId?: string; closedDuringQuery: boolean }> {
 
-  const extTools = [sendMessageTool, scheduleTaskTool, listTasksTool, cancelTaskTool];
-
+  const sessionId = containerInput.sessionId;
   let sessionManager;
   if (sessionId) {
     // Try to find and open existing session
@@ -177,11 +194,20 @@ async function runQuery(
     log('Creating new persistent session');
     sessionManager = SessionManager.create(process.cwd());
   }
-
+  
+  const extTools = [sendMessageTool, scheduleTaskTool, listTasksTool, cancelTaskTool];
+  const resLoader = new DefaultResourceLoader({
+	  systemPromptOverride: () => SYSTEM_PROMPT,
+  });
+  await resLoader.reload();
+  
   const { session } = await createAgentSession({
     sessionManager: sessionManager,
     customTools: extTools,
+    resourceLoader: resLoader,
   });
+
+  console.log( session.systemPrompt );
 
   session.subscribe((event) => {
     switch (event.type) {
@@ -247,8 +273,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-
-  let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
   // Clean up stale _close sentinel from previous container runs
@@ -268,11 +292,11 @@ async function main(): Promise<void> {
   // Query loop: run query → wait for IPC message → run new query → repeat
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'})...`);
+      log(`Starting query (session: ${containerInput.sessionId || 'new'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, containerInput);
+      const queryResult = await runQuery(prompt, containerInput); 
       if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
+        containerInput.sessionId = queryResult.newSessionId;
       }
 
       // If _close was consumed during the query, exit immediately.
@@ -284,7 +308,7 @@ async function main(): Promise<void> {
       }
 
       // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      writeOutput({ status: 'success', result: null, newSessionId: containerInput.sessionId });
 
       log('Query ended, waiting for next IPC message...');
 
@@ -304,14 +328,12 @@ async function main(): Promise<void> {
     writeOutput({
       status: 'error',
       result: null,
-      newSessionId: sessionId,
+      newSessionId: containerInput.sessionId,
       error: errorMessage
     });
     process.exit(1);
   }
 }
 
-console.log("#### Contianer Current Directory: " + process.cwd());
-console.log("#### " + process.env.http_proxy);
-console.log("#### " + process.env.https_proxy);
+console.log("#### Contianer Working Folder: " + process.cwd() + " #####");
 main();

@@ -75,6 +75,7 @@ export class WeChatChannel implements Channel {
   private connected = false;
   private auth: WeChatAuthInfo;
   private opts: ChannelOpts;
+  private typing_ticket: string = "";
   private lastContentToken: string = "";
 
   private constructor(auth: WeChatAuthInfo, opts: ChannelOpts) {
@@ -133,7 +134,20 @@ export class WeChatChannel implements Channel {
     logger.debug({ userId }, "WeChat message sent");
   }
 
-  async setTyping(isTyping: boolean): Promise<void> {}
+  async setTyping(isTyping: boolean): Promise<void> {
+    /*
+    if (this.typing_ticket === "") {
+      const resp = await apiPost(
+        WECHAT_BASE_URL,
+        "/ilink/bot/getconfig",
+        {},
+        this.auth.WX_TOKEN,
+        38_000, // 长轮询，服务器最多 hold 35s
+      );
+      console.log(">>>>>>>>>: " + resp);
+    }
+    */
+  }
 
   // internal functions
 
